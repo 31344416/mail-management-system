@@ -1,0 +1,13 @@
+# Ignore uploaded files (attachments)
+/uploads/
+
+# Ignore database configuration (contains password)
+backend/config.php
+
+# Ignore IDE files
+.vscode/
+.idea/
+
+# Ignore OS junk files
+.DS_Store
+Thumbs.db
