@@ -19,10 +19,22 @@ if (!$mail) {
     die("Mail not found.");
 }
 
+<<<<<<< HEAD
 // Check if current user is a recipient of this mail
 $stmt = $pdo->prepare("SELECT id FROM mail_recipients WHERE mail_id = ? AND recipient_id = ?");
 $stmt->execute([$mailId, $_SESSION['user_id']]);
 $isRecipient = $stmt->fetchColumn() ? true : false;
+=======
+// If the current user is the sender and the clear_notif parameter is present, delete corresponding notifications
+if (isset($_GET['clear_notif']) && $_GET['clear_notif'] == 1 && $mail['sender_id'] == $_SESSION['user_id']) {
+    $stmt = $pdo->prepare("DELETE FROM mail_tracking 
+                           WHERE mail_id = ? AND user_id = ? AND action = 'opened_by_recipient'");
+    $stmt->execute([$mailId, $_SESSION['user_id']]);
+}
+
+// Mark as read and archive for current user
+markAsReadAndArchive($pdo, $mailId, $_SESSION['user_id']);
+>>>>>>> fd104697f1585138bd79883f694d06e8eef2c54c
 
 if ($isRecipient) {
     // Normal user or Top Manager who is also a recipient

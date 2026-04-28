@@ -91,7 +91,7 @@ extract($data);
                                         <li class="list-group-item">
                                             <i class="fas fa-envelope-open-text text-success"></i>
                                             <strong><?= htmlspecialchars($notif['recipient_name'] ?? '') ?></strong> opened your mail 
-                                            "<a href="view_mail.php?id=<?= $notif['mail_id'] ?>"><?= htmlspecialchars($notif['subject'] ?? '') ?></a>"
+                                            "<a href="view_mail.php?id=<?= $notif['mail_id'] ?>&clear_notif=1"><?= htmlspecialchars($notif['subject'] ?? '') ?></a>"
                                             <span class="text-muted float-end"><?= date('d/m/Y H:i', strtotime($notif['action_date'])) ?></span>
                                         </li>
                                     <?php endforeach; ?>
