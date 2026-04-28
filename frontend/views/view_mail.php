@@ -19,11 +19,21 @@ if (!$mail) {
     die("Mail not found.");
 }
 
-// Mark as read and archive for current user
-markAsReadAndArchive($pdo, $mailId, $_SESSION['user_id']);
+// Check if current user is a recipient of this mail
+$stmt = $pdo->prepare("SELECT id FROM mail_recipients WHERE mail_id = ? AND recipient_id = ?");
+$stmt->execute([$mailId, $_SESSION['user_id']]);
+$isRecipient = $stmt->fetchColumn() ? true : false;
 
-// Notify sender that the mail was opened
-notifySenderOpened($pdo, $mailId, $_SESSION['user_id'], $_SESSION['full_name']);
+if ($isRecipient) {
+    // Normal user or Top Manager who is also a recipient
+    markAsReadAndArchive($pdo, $mailId, $_SESSION['user_id']);
+    notifySenderOpened($pdo, $mailId, $_SESSION['user_id'], $_SESSION['full_name']);
+} else {
+    // Top Manager (or other role without recipient row) viewing a mail from global archive
+    // Only track the opening, do not alter mail_recipients
+    $trackModel = new Tracking($pdo);
+    $trackModel->add($mailId, $_SESSION['user_id'], 'opened_by_top_manager', 'Top manager viewed this mail');
+}
 
 $replies = getMailReplies($pdo, $mailId);
 $originalMail = getOriginalMail($pdo, $mailId);

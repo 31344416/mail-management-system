@@ -21,7 +21,16 @@ $status = $_GET['status'] ?? '';
 
 // For normal users (middle/end managers) handle archive/restore actions
 if (!$isTopManager) {
-    handleArchiveAction($pdo, $userId);
+    // Manual archive from receive.php
+    if (isset($_GET['action']) && $_GET['action'] === 'archive' && isset($_GET['id'])) {
+        $mailId = (int)$_GET['id'];
+        $mailModel = new Mail($pdo);
+        if ($mailModel->archiveForUser($mailId, $userId)) {
+            header('Location: receive.php?msg=archived');
+            exit;
+        }
+    }
+
     // Restore action
     if (isset($_GET['restore']) && is_numeric($_GET['restore'])) {
         $mailId = (int)$_GET['restore'];
@@ -31,6 +40,7 @@ if (!$isTopManager) {
             exit;
         }
     }
+
     // Permanent delete (only for own archived mails)
     if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
         $mailId = (int)$_GET['delete'];
@@ -170,11 +180,7 @@ if ($isTopManager) {
                             <th>Priority</th>
                             <th>Date</th>
                             <th>Archive Status</th>
-                            <?php if ($isTopManager): ?>
-                            <th>Opened by You</th>
-                            <?php else: ?>
                             <th>Actions</th>
-                            <?php endif; ?>
                         </tr>
                     </thead>
                     <tbody>
@@ -196,31 +202,26 @@ if ($isTopManager) {
                             </td>
                             <td><?= date('d/m/Y H:i', strtotime($mail['created_at'])) ?></td>
                             <td>
-                                <?php if ($mail['is_archived_global']): ?>
+                                <?php if ($mail['is_archived_global'] ?? false): ?>
                                     <span class="badge bg-success">Archived (opened by someone)</span>
                                 <?php else: ?>
                                     <span class="badge bg-info">Unread (no one opened)</span>
                                 <?php endif; ?>
                             </td>
-                            <?php if ($isTopManager): ?>
                             <td>
-                                <?php if ($mail['opened_by_you_date']): ?>
-                                    <span class="badge bg-primary">
-                                        Opened on <?= date('d/m/Y H:i', strtotime($mail['opened_by_you_date'])) ?>
-                                    </span>
+                                <?php if ($isTopManager): ?>
+                                    <a href="view_mail.php?id=<?= $mail['id'] ?>" class="btn btn-sm btn-primary">View</a>
+                                    <?php if (!empty($mail['opened_by_you_date'])): ?>
+                                        <br><small class="text-muted">Opened: <?= date('d/m/Y H:i', strtotime($mail['opened_by_you_date'])) ?></small>
+                                    <?php endif; ?>
                                 <?php else: ?>
-                                    <span class="badge bg-secondary">Not opened by you</span>
+                                    <a href="view_mail.php?id=<?= $mail['id'] ?>" class="btn btn-sm btn-primary">View</a>
+                                    <a href="?restore=<?= $mail['id'] ?>" class="btn btn-sm btn-success">Restore</a>
+                                    <a href="?delete=<?= $mail['id'] ?>" 
+                                       class="btn btn-sm btn-danger" 
+                                       onclick="return confirm('Permanently delete?')">Delete</a>
                                 <?php endif; ?>
                             </td>
-                            <?php else: ?>
-                            <td>
-                                <a href="view_mail.php?id=<?= $mail['id'] ?>" class="btn btn-sm btn-primary">View</a>
-                                <a href="?restore=<?= $mail['id'] ?>" class="btn btn-sm btn-success">Restore</a>
-                                <a href="?delete=<?= $mail['id'] ?>" 
-                                   class="btn btn-sm btn-danger" 
-                                   onclick="return confirm('Permanently delete?')">Delete</a>
-                            </td>
-                            <?php endif; ?>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
