@@ -19,30 +19,24 @@ if (!$mail) {
     die("Mail not found.");
 }
 
-<<<<<<< HEAD
-// Check if current user is a recipient of this mail
+// Check if current user is a recipient
 $stmt = $pdo->prepare("SELECT id FROM mail_recipients WHERE mail_id = ? AND recipient_id = ?");
 $stmt->execute([$mailId, $_SESSION['user_id']]);
 $isRecipient = $stmt->fetchColumn() ? true : false;
-=======
-// If the current user is the sender and the clear_notif parameter is present, delete corresponding notifications
+
+// If clear_notif parameter is present and user is sender, delete notification
 if (isset($_GET['clear_notif']) && $_GET['clear_notif'] == 1 && $mail['sender_id'] == $_SESSION['user_id']) {
     $stmt = $pdo->prepare("DELETE FROM mail_tracking 
                            WHERE mail_id = ? AND user_id = ? AND action = 'opened_by_recipient'");
     $stmt->execute([$mailId, $_SESSION['user_id']]);
 }
 
-// Mark as read and archive for current user
-markAsReadAndArchive($pdo, $mailId, $_SESSION['user_id']);
->>>>>>> fd104697f1585138bd79883f694d06e8eef2c54c
-
 if ($isRecipient) {
-    // Normal user or Top Manager who is also a recipient
+    // Normal recipient (including Top Manager if they are a recipient)
     markAsReadAndArchive($pdo, $mailId, $_SESSION['user_id']);
     notifySenderOpened($pdo, $mailId, $_SESSION['user_id'], $_SESSION['full_name']);
 } else {
-    // Top Manager (or other role without recipient row) viewing a mail from global archive
-    // Only track the opening, do not alter mail_recipients
+    // User not a recipient (e.g., Top Manager from global archive)
     $trackModel = new Tracking($pdo);
     $trackModel->add($mailId, $_SESSION['user_id'], 'opened_by_top_manager', 'Top manager viewed this mail');
 }
