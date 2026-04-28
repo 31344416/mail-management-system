@@ -1,8 +1,71 @@
 <?php
-session_start();
+// session_start(); // <-- REMOVED (session already started in config.php)
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireRole('admin');
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/config.php';
+
+// ========== EMBEDDED HELPER FUNCTIONS ==========
+function getAllUsers($pdo, $search) {
+    $sql = "SELECT u.*, s.name as structure_name,
+            (SELECT COUNT(*) FROM mails WHERE sender_id = u.id) as sent_count,
+            (SELECT COUNT(*) FROM mail_recipients WHERE recipient_id = u.id) as received_count
+            FROM users u LEFT JOIN structures s ON u.structure_id = s.id
+            WHERE u.role != 'admin'";
+    $params = [];
+    if (!empty($search)) {
+        $sql .= " AND (u.username LIKE ? OR u.full_name LIKE ? OR u.email LIKE ?)";
+        $params = ["%$search%", "%$search%", "%$search%"];
+    }
+    $sql .= " ORDER BY u.full_name";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function getUserForEdit($pdo, $id) {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function addUser($pdo, $data, $customPassword) {
+    $password = !empty($customPassword) ? $customPassword : 'admin123';
+    $hash = password_hash($password, PASSWORD_DEFAULT);
+    $stmt = $pdo->prepare("INSERT INTO users (username, password, email, full_name, structure_id, role, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)");
+    return $stmt->execute([$data['username'], $hash, $data['email'], $data['full_name'], $data['structure_id'], $data['role']]);
+}
+
+function updateUser($pdo, $id, $data) {
+    $stmt = $pdo->prepare("UPDATE users SET username=?, full_name=?, email=?, structure_id=?, role=? WHERE id=? AND role != 'admin'");
+    return $stmt->execute([$data['username'], $data['full_name'], $data['email'], $data['structure_id'], $data['role'], $id]);
+}
+
+function deleteUser($pdo, $id) {
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE sender_id = ? OR id IN (SELECT mail_id FROM mail_recipients WHERE recipient_id = ?)");
+    $stmt->execute([$id, $id]);
+    if ($stmt->fetchColumn() > 0) {
+        return "Cannot delete user: they have sent or received mails.";
+    }
+    $stmt = $pdo->prepare("DELETE FROM users WHERE id = ? AND role != 'admin'");
+    return $stmt->execute([$id]) ? true : "Delete failed.";
+}
+
+function toggleUserActive($pdo, $id) {
+    $stmt = $pdo->prepare("UPDATE users SET is_active = NOT is_active WHERE id = ? AND role != 'admin'");
+    return $stmt->execute([$id]);
+}
+
+function resetUserPassword($pdo, $id) {
+    $hash = password_hash('admin123', PASSWORD_DEFAULT);
+    $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ? AND role != 'admin'");
+    return $stmt->execute([$hash, $id]);
+}
+
+function getAllStructuresForSelect($pdo) {
+    $stmt = $pdo->query("SELECT id, name FROM structures ORDER BY name");
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+// =================================================
 
 $error = '';
 $success = '';
