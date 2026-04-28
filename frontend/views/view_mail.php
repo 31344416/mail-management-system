@@ -88,7 +88,7 @@ $canReply = canReplyToType($mail['type'] ?? '');
                         <?php if (!empty($mail['file_path'])): ?>
                             <p>
                                 <strong>Attachment:</strong> 
-                                <a href="../backend/download.php?file=<?= urlencode(basename($mail['file_path'])) ?>" 
+                                <a href="/mail_management/backend/download.php?file=<?= urlencode(basename($mail['file_path'])) ?>" 
                                    class="btn btn-sm btn-success" target="_blank">
                                     <i class="fas fa-download"></i> Download File
                                 </a>
