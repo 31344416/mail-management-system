@@ -12,10 +12,21 @@ class User {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
+    // Méthode corrigée avec jointure pour récupérer structure_name
     public function findById($id) {
-        $stmt = $this->pdo->prepare("SELECT * FROM users WHERE id = ?");
+        $stmt = $this->pdo->prepare("
+            SELECT u.*, s.name as structure_name 
+            FROM users u 
+            LEFT JOIN structures s ON u.structure_id = s.id 
+            WHERE u.id = ?
+        ");
         $stmt->execute([$id]);
         return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    // Alias pour compatibilité avec ProfileController
+    public function getById($id) {
+        return $this->findById($id);
     }
     
     public function updateLastLogin($id) {

@@ -3,19 +3,32 @@ require_once __DIR__ . '/../models/Mail.php';
 require_once __DIR__ . '/../models/Tracking.php';
 require_once __DIR__ . '/../models/Structure.php';
 
+// Génération robuste avec transaction et fallback
 function generateUniqueReferenceNumber($pdo, $structureCode) {
     $year = date('Y');
-    $pattern = "%-$structureCode-$year";
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE ref_number LIKE ?");
-    $stmt->execute([$pattern]);
-    $count = $stmt->fetchColumn();
-    $next = str_pad($count + 1, 4, '0', STR_PAD_LEFT);
-    $candidate = "$next-$structureCode-$year";
-    // Ensure uniqueness (just in case of race condition)
-    $check = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE ref_number = ?");
-    $check->execute([$candidate]);
-    if ($check->fetchColumn() == 0) return $candidate;
-    // fallback: timestamp
+    $maxAttempts = 3;
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        $pdo->beginTransaction();
+        try {
+            // Verrouillage de la table pour éviter les collisions
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE ref_number LIKE ? FOR UPDATE");
+            $stmt->execute(["%-$structureCode-$year"]);
+            $count = $stmt->fetchColumn();
+            $next = str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+            $candidate = "$next-$structureCode-$year";
+            
+            $check = $pdo->prepare("SELECT id FROM mails WHERE ref_number = ? FOR UPDATE");
+            $check->execute([$candidate]);
+            if (!$check->fetch()) {
+                $pdo->commit();
+                return $candidate;
+            }
+            $pdo->rollBack();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+        }
+    }
+    // Fallback : timestamp
     return date('YmdHis') . "-$structureCode-$year";
 }
 
@@ -24,42 +37,53 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
     $success = '';
     
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        // CSRF token check (à ajouter)
+        if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
+            $error = "Erreur de sécurité (CSRF). Veuillez recharger la page.";
+            return ['error' => $error, 'success' => ''];
+        }
+        
         $subject = trim($_POST['subject']);
         $content = trim($_POST['content']);
         $type = $_POST['type'];
         $priority = $_POST['priority'];
         $recipient_id = $_POST['recipient_id'];
-        $target_structure_id = $_POST['target_structure_id']; // division
+        $target_structure_id = $_POST['target_structure_id'];
         $parentId = ($replyToId > 0) ? $replyToId : null;
         
-        // Validate
         if (empty($target_structure_id)) {
-            $error = "Please select a destination division.";
+            $error = "Veuillez sélectionner une division destinataire.";
         } elseif (!in_array($type, $allowedTypes)) {
-            $error = "You are not allowed to send this type of mail.";
+            $error = "Vous n'avez pas le droit d'envoyer ce type de courrier.";
         } elseif (empty($subject) || empty($content) || empty($recipient_id)) {
-            $error = "Please fill in all fields and select a recipient.";
+            $error = "Veuillez remplir tous les champs obligatoires.";
         } else {
-            // Get target structure code
             $structModel = new Structure($pdo);
             $targetStruct = $structModel->getById($target_structure_id);
             if (!$targetStruct) {
-                $error = "Invalid target division.";
+                $error = "Division invalide.";
             } else {
                 $targetCode = $targetStruct['code'];
                 $refNumber = generateUniqueReferenceNumber($pdo, $targetCode);
                 
-                // File upload
+                // Gestion du fichier avec validation
                 $filePath = null;
                 if (isset($_FILES['attachment']) && $_FILES['attachment']['error'] === UPLOAD_ERR_OK) {
-                    $uploadDir = $_SERVER['DOCUMENT_ROOT'] . '/mail_management/uploads/';
-                    if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
-                    $fileName = time() . '_' . basename($_FILES['attachment']['name']);
-                    $targetFile = $uploadDir . $fileName;
-                    if (move_uploaded_file($_FILES['attachment']['tmp_name'], $targetFile)) {
-                        $filePath = 'uploads/' . $fileName;
+                    $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'png', 'zip'];
+                    $originalName = $_FILES['attachment']['name'];
+                    $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+                    if (!in_array($ext, $allowedExtensions)) {
+                        $error = "Type de fichier non autorisé (PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, ZIP uniquement).";
                     } else {
-                        $error = "File upload failed.";
+                        $uploadDir = $_SERVER['DOCUMENT_ROOT'] . '/mail_management/uploads/';
+                        if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
+                        $safeName = time() . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
+                        $targetFile = $uploadDir . $safeName;
+                        if (move_uploaded_file($_FILES['attachment']['tmp_name'], $targetFile)) {
+                            $filePath = 'uploads/' . $safeName;
+                        } else {
+                            $error = "Échec du téléchargement du fichier.";
+                        }
                     }
                 }
                 
@@ -67,7 +91,6 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
                     $mailModel = new Mail($pdo);
                     $trackModel = new Tracking($pdo);
                     
-                    // Insert mail
                     $mailData = [
                         'ref_number' => $refNumber,
                         'subject' => $subject,
@@ -80,44 +103,28 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
                     ];
                     if ($mailModel->create($mailData)) {
                         $mailId = $pdo->lastInsertId();
-                        
-                        // 1. Add recipient (normal inbox, not archived)
                         $mailModel->addRecipient($mailId, $recipient_id);
-                        
-                        // 2. Add archived copy for the sender
                         $mailModel->addArchivedCopyForSender($mailId, $userId);
-                        
-                        // 3. Tracking: sent by sender
                         $trackModel->add($mailId, $userId, 'sent');
-                        // 4. Tracking: received by recipient
                         $trackModel->add($mailId, $recipient_id, 'received');
                         
-                        // If this is a reply, archive the original mail for replier and original sender
                         if ($replyToId > 0) {
-                            // Archive original for replier
+                            // Archive automatique pour le répondant
                             $mailModel->archiveForUser($replyToId, $userId);
                             $trackModel->add($replyToId, $userId, 'archived_after_reply');
-                            
-                            // Archive original for the original sender (if different)
-                            $origSenderId = $mailModel->getSenderId($replyToId);
-                            if ($origSenderId && $origSenderId != $userId) {
-                                $mailModel->archiveForUser($replyToId, $origSenderId);
-                                $trackModel->add($replyToId, $origSenderId, 'archived_by_reply');
-                            }
+                            // On n'archive plus pour l'expéditeur original (trop intrusif)
                         }
                         
-                        $success = "Mail sent successfully. Reference: $refNumber";
-                        // Reset form (by redirecting to avoid resubmission)
+                        $_SESSION['flash_success'] = "Mail envoyé avec succès. Réf : $refNumber";
                         header("Location: send.php?success=1");
                         exit;
                     } else {
-                        $error = "Failed to insert mail.";
+                        $error = "Erreur lors de l'enregistrement.";
                     }
                 }
             }
         }
     }
-    
     return ['error' => $error, 'success' => $success];
 }
 

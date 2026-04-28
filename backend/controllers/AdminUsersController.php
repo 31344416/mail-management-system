@@ -7,9 +7,9 @@ function getAllUsers($pdo, $search = '') {
     return $userModel->getAllNonAdmin($search);
 }
 
-function getUserById($pdo, $id) {
+function getUserForEdit($pdo, $id) {
     $userModel = new User($pdo);
-    return $userModel->findById($id);
+    return $userModel->getById($id);
 }
 
 function addUser($pdo, $data, $customPassword = null) {
@@ -26,28 +26,23 @@ function updateUser($pdo, $id, $data) {
 
 function deleteUser($pdo, $id) {
     $userModel = new User($pdo);
-    // Check if user has mails (sent or received)
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE sender_id = ?");
-    $stmt->execute([$id]);
-    $sent = $stmt->fetchColumn();
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM mail_recipients WHERE recipient_id = ?");
-    $stmt->execute([$id]);
-    $received = $stmt->fetchColumn();
-    if ($sent > 0 || $received > 0) {
-        return "Cannot delete user: they have sent or received mails. Suspend instead.";
+    // Check if user has mails
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE sender_id = ? OR id IN (SELECT mail_id FROM mail_recipients WHERE recipient_id = ?)");
+    $stmt->execute([$id, $id]);
+    if ($stmt->fetchColumn() > 0) {
+        return "Cannot delete user: they have sent or received mails.";
     }
     return $userModel->delete($id) ? true : "Delete failed.";
 }
 
-function toggleUserStatus($pdo, $id) {
+function toggleUserActive($pdo, $id) {
     $userModel = new User($pdo);
     return $userModel->toggleActive($id);
 }
 
 function resetUserPassword($pdo, $id) {
     $userModel = new User($pdo);
-    $hash = password_hash('admin123', PASSWORD_DEFAULT);
-    return $userModel->resetPassword($id, $hash);
+    return $userModel->resetPassword($id, password_hash('admin123', PASSWORD_DEFAULT));
 }
 
 function getAllStructuresForSelect($pdo) {
