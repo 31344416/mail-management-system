@@ -19,6 +19,13 @@ if (!$mail) {
     die("Mail not found.");
 }
 
+// If the current user is the sender and the clear_notif parameter is present, delete corresponding notifications
+if (isset($_GET['clear_notif']) && $_GET['clear_notif'] == 1 && $mail['sender_id'] == $_SESSION['user_id']) {
+    $stmt = $pdo->prepare("DELETE FROM mail_tracking 
+                           WHERE mail_id = ? AND user_id = ? AND action = 'opened_by_recipient'");
+    $stmt->execute([$mailId, $_SESSION['user_id']]);
+}
+
 // Mark as read and archive for current user
 markAsReadAndArchive($pdo, $mailId, $_SESSION['user_id']);
 
