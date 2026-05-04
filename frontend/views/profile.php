@@ -2,6 +2,7 @@
 session_start();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireLogin();
+requirePasswordChange();
 
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/controllers/ProfileController.php';
 
@@ -47,26 +48,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
 <body>
     <div class="container-fluid">
         <div class="row">
-            <!-- Sidebar with role-based menu -->
+            <!-- Sidebar -->
             <div class="col-md-2 bg-dark sidebar p-3">
                 <h5 class="text-white text-center">MMS</h5>
                 <hr class="text-secondary">
                 <nav class="nav flex-column">
-                    <!-- Dashboard is common to all -->
                     <a href="dashboard.php" class="nav-link"><i class="fas fa-home"></i> Dashboard</a>
                     
                     <?php if (!hasRole('admin')): ?>
-                        <!-- Non-admin (managers) see mail links -->
                         <a href="receive.php" class="nav-link"><i class="fas fa-inbox"></i> My Arrivals</a>
                         <a href="send.php" class="nav-link"><i class="fas fa-paper-plane"></i> Send Mail</a>
                         <a href="archive.php" class="nav-link"><i class="fas fa-archive"></i> Archive</a>
                     <?php endif; ?>
                     
-                    <!-- Profile is common to all -->
                     <a href="profile.php" class="nav-link active"><i class="fas fa-user"></i> My Profile</a>
                     
                     <?php if (hasRole('admin')): ?>
-                        <!-- Admin-only management links -->
                         <hr class="text-secondary">
                         <a href="admin_structures.php" class="nav-link"><i class="fas fa-building"></i> Structures</a>
                         <a href="admin_users.php" class="nav-link"><i class="fas fa-users"></i> Employees</a>
@@ -78,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
                 </nav>
             </div>
 
-            <!-- Main Content (unchanged) -->
+            <!-- Main Content -->
             <div class="col-md-10 p-4">
                 <h2><i class="fas fa-user-circle"></i> My Profile</h2>
 

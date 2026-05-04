@@ -2,6 +2,7 @@
 session_start();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireLogin();
+requirePasswordChange();
 
 if (hasRole('admin')) {
     die("Administrators cannot send mails.");
@@ -9,7 +10,6 @@ if (hasRole('admin')) {
 
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/controllers/SendController.php';
 
-// Generate CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
@@ -38,7 +38,6 @@ $result = handleSendMail($pdo, $userId, $allowedTypes, $replyToId);
 $error = $result['error'] ?? '';
 $success = $result['success'] ?? '';
 
-$recipients = getRecipients($pdo, $userId);
 $allStructures = getAllStructuresForDropdown($pdo);
 ?>
 
@@ -55,7 +54,6 @@ $allStructures = getAllStructuresForDropdown($pdo);
 <body>
 <div class="container-fluid">
     <div class="row">
-        <!-- Sidebar -->
         <div class="col-md-2 bg-dark sidebar p-3">
             <h5 class="text-white text-center">MMS</h5>
             <hr class="text-secondary">
@@ -70,7 +68,6 @@ $allStructures = getAllStructuresForDropdown($pdo);
             </nav>
         </div>
 
-        <!-- Main Content -->
         <div class="col-md-10 p-4">
             <h2><i class="fas fa-paper-plane"></i> Send New Mail</h2>
 
@@ -84,12 +81,12 @@ $allStructures = getAllStructuresForDropdown($pdo);
 
             <div class="card">
                 <div class="card-body">
-                    <form method="POST" enctype="multipart/form-data">
+                    <form method="POST" enctype="multipart/form-data" id="sendMailForm">
                         <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 
                         <div class="mb-3">
                             <label class="form-label"><strong>Recipient Division</strong> <span class="text-danger">*</span></label>
-                            <select name="target_structure_id" class="form-select" required>
+                            <select name="target_structure_id" id="divisionSelect" class="form-select" required>
                                 <option value="">-- Select Division --</option>
                                 <?php foreach ($allStructures as $struct): ?>
                                     <option value="<?= $struct['id'] ?>">
@@ -143,13 +140,8 @@ $allStructures = getAllStructuresForDropdown($pdo);
 
                         <div class="mb-3">
                             <label class="form-label"><strong>Recipient User</strong> <span class="text-danger">*</span></label>
-                            <select name="recipient_id" class="form-select" required>
-                                <option value="">-- Select Recipient --</option>
-                                <?php foreach ($recipients as $user): ?>
-                                    <option value="<?= $user['id'] ?>">
-                                        <?= htmlspecialchars($user['full_name']) ?> (<?= ucfirst(str_replace('_', ' ', $user['role'])) ?>)
-                                    </option>
-                                <?php endforeach; ?>
+                            <select name="recipient_id" id="recipientSelect" class="form-select" required>
+                                <option value="">-- First select a division --</option>
                             </select>
                         </div>
 
@@ -168,5 +160,56 @@ $allStructures = getAllStructuresForDropdown($pdo);
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="../assets/js/main.js"></script>
+
+<script>
+document.getElementById('divisionSelect').addEventListener('change', function() {
+    var divisionId = this.value;
+    var recipientSelect = document.getElementById('recipientSelect');
+    
+    if (divisionId == '') {
+        recipientSelect.innerHTML = '<option value="">-- First select a division --</option>';
+        return;
+    }
+    
+    // Show loading state
+    recipientSelect.innerHTML = '<option value="">Loading users...</option>';
+    
+    // Use absolute path to API
+    var apiUrl = '/mail_management/backend/api/getUsersByDivision.php?division_id=' + divisionId;
+    
+    fetch(apiUrl)
+        .then(function(response) {
+            if (!response.ok) {
+                throw new Error('HTTP error ' + response.status);
+            }
+            return response.json();
+        })
+        .then(function(users) {
+            recipientSelect.innerHTML = '';
+            if (users.length === 0) {
+                recipientSelect.innerHTML = '<option value="">No users found in this division</option>';
+            } else if (users.error) {
+                recipientSelect.innerHTML = '<option value="">Error: ' + users.error + '</option>';
+            } else {
+                var defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = '-- Select Recipient --';
+                recipientSelect.appendChild(defaultOption);
+                
+                users.forEach(function(user) {
+                    var option = document.createElement('option');
+                    option.value = user.id;
+                    var roleText = user.role ? user.role.replace('_', ' ') : '';
+                    option.textContent = user.full_name + ' (' + roleText + ')';
+                    recipientSelect.appendChild(option);
+                });
+            }
+        })
+        .catch(function(error) {
+            console.error('Fetch error:', error);
+            recipientSelect.innerHTML = '<option value="">Error loading users. Check console.</option>';
+        });
+});
+</script>
 </body>
 </html>

@@ -2,8 +2,9 @@
 session_start();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireLogin();
+requirePasswordChange();
 
-// Admin is not allowed in archive page
+// Admin not allowed
 if (hasRole('admin')) {
     header('Location: dashboard.php');
     exit;
@@ -14,14 +15,24 @@ require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/controllers/A
 $userId = $_SESSION['user_id'];
 $isTopManager = hasRole('top_manager');
 $error = '';
+$success = '';
 $search = $_GET['search'] ?? '';
 $type = $_GET['type'] ?? '';
 $priority = $_GET['priority'] ?? '';
 $status = $_GET['status'] ?? '';
 
-// For normal users (middle/end managers) handle archive/restore actions
+// Handle DELETE for sender (mistake correction) - now available for all managers
+if (isset($_GET['delete_mail']) && is_numeric($_GET['delete_mail'])) {
+    $mailId = (int)$_GET['delete_mail'];
+    // Allow any manager to delete (not just sender)
+    $pdo->prepare("DELETE FROM mail_tracking WHERE mail_id = ?")->execute([$mailId]);
+    $pdo->prepare("DELETE FROM mail_recipients WHERE mail_id = ?")->execute([$mailId]);
+    $pdo->prepare("DELETE FROM mails WHERE id = ?")->execute([$mailId]);
+    $success = "Mail deleted successfully.";
+}
+
+// For normal users (middle/end) handle restore/delete actions
 if (!$isTopManager) {
-    // Manual archive from receive.php
     if (isset($_GET['action']) && $_GET['action'] === 'archive' && isset($_GET['id'])) {
         $mailId = (int)$_GET['id'];
         $mailModel = new Mail($pdo);
@@ -30,8 +41,6 @@ if (!$isTopManager) {
             exit;
         }
     }
-
-    // Restore action
     if (isset($_GET['restore']) && is_numeric($_GET['restore'])) {
         $mailId = (int)$_GET['restore'];
         $mailModel = new Mail($pdo);
@@ -40,8 +49,6 @@ if (!$isTopManager) {
             exit;
         }
     }
-
-    // Permanent delete (only for own archived mails)
     if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
         $mailId = (int)$_GET['delete'];
         $pdo->prepare("DELETE FROM mail_tracking WHERE mail_id = ? AND user_id = ?")->execute([$mailId, $userId]);
@@ -56,11 +63,13 @@ if (!$isTopManager) {
     }
 }
 
-// Retrieve data depending on role
+// Retrieve grouped conversations based on role
 if ($isTopManager) {
-    $mails = getGlobalMailsForTopManager($pdo, $userId, $search, $type, $priority, $status);
+    $conversations = getConversationsForTopManager($pdo, $userId, $search, $type, $priority, $status);
+    // Only show conversations that have been archived (opened by someone)
+    $conversations = array_values(array_filter($conversations, fn($c) => $c['is_archived_global'] == true));
 } else {
-    $mails = getArchivedMails($pdo, $userId, $search);
+    $conversations = getGroupedArchivedMails($pdo, $userId, $search);
 }
 ?>
 
@@ -79,8 +88,7 @@ if ($isTopManager) {
     <div class="row">
         <!-- Sidebar -->
         <div class="col-md-2 bg-dark sidebar p-3">
-            <h5 class="text-white text-center">MMS</h5>
-            <hr class="text-secondary">
+            <h5 class="text-white text-center">MMS</h5><hr>
             <nav class="nav flex-column">
                 <a href="dashboard.php" class="nav-link"><i class="fas fa-home"></i> Dashboard</a>
                 <?php if (!$isTopManager): ?>
@@ -93,29 +101,32 @@ if ($isTopManager) {
                     <a href="archive.php" class="nav-link active"><i class="fas fa-globe"></i> Global Archive</a>
                 <?php endif; ?>
                 <a href="profile.php" class="nav-link"><i class="fas fa-user"></i> My Profile</a>
-                <hr class="text-secondary">
-                <a href="logout.php" class="nav-link"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                <hr><a href="logout.php" class="nav-link"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </nav>
         </div>
 
         <!-- Main Content -->
         <div class="col-md-10 p-4">
             <h2><i class="fas <?= $isTopManager ? 'fa-globe' : 'fa-archive' ?>"></i> 
-                <?= $isTopManager ? 'Global Archive (All System Emails)' : 'My Archived Mails' ?>
+                <?= $isTopManager ? 'Global Archive (Conversations)' : 'My Archived Conversations' ?>
             </h2>
 
             <?php if (isset($_GET['msg'])): ?>
                 <div class="alert alert-success">Action completed successfully.</div>
             <?php endif; ?>
+            <?php if ($error): ?>
+                <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+            <?php endif; ?>
+            <?php if ($success): ?>
+                <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
+            <?php endif; ?>
 
-            <!-- Search & Filters (only for Top Manager) -->
-            <?php if ($isTopManager): ?>
+            <!-- Search & filters -->
             <form method="GET" class="row g-3 mb-4">
-                <div class="col-md-3">
-                    <input type="text" name="search" class="form-control" 
-                           placeholder="Search by ref, subject, sender, recipient..." 
-                           value="<?= htmlspecialchars($search) ?>">
+                <div class="col-md-5">
+                    <input type="text" name="search" class="form-control" placeholder="Search by reference, subject, sender..." value="<?= htmlspecialchars($search) ?>">
                 </div>
+                <?php if ($isTopManager): ?>
                 <div class="col-md-2">
                     <select name="type" class="form-select">
                         <option value="">All Types</option>
@@ -137,35 +148,19 @@ if ($isTopManager) {
                     <select name="status" class="form-select">
                         <option value="">All Statuses</option>
                         <option value="unread" <?= $status=='unread' ? 'selected' : '' ?>>Unread (no one opened)</option>
-                        <option value="archived" <?= $status=='archived' ? 'selected' : '' ?>>Archived (opened by someone)</option>
+                        <option value="archived" <?= $status=='archived' ? 'selected' : '' ?>>Archived (opened)</option>
                     </select>
                 </div>
-                <div class="col-md-2">
+                <?php endif; ?>
+                <div class="col-md-<?= $isTopManager ? '1' : '2' ?>">
                     <button type="submit" class="btn btn-primary w-100">Filter</button>
                 </div>
                 <div class="col-md-1">
                     <a href="archive.php" class="btn btn-secondary w-100">Reset</a>
                 </div>
             </form>
-            <?php else: ?>
-            <!-- Simple search for normal users -->
-            <form method="GET" class="row g-3 mb-4">
-                <div class="col-md-8">
-                    <input type="text" name="search" class="form-control" 
-                           placeholder="Search archived mails..." 
-                           value="<?= htmlspecialchars($search) ?>">
-                </div>
-                <div class="col-md-2">
-                    <button type="submit" class="btn btn-primary w-100">Search</button>
-                </div>
-                <div class="col-md-2">
-                    <a href="archive.php" class="btn btn-secondary w-100">Reset</a>
-                </div>
-            </form>
-            <?php endif; ?>
 
-            <!-- Mails Table -->
-            <?php if (count($mails) > 0): ?>
+            <?php if (count($conversations) > 0): ?>
             <div class="table-responsive">
                 <table class="table table-bordered table-hover">
                     <thead class="table-dark">
@@ -179,47 +174,48 @@ if ($isTopManager) {
                             <th>Type</th>
                             <th>Priority</th>
                             <th>Date</th>
+                            <th>Replies</th>
+                            <?php if ($isTopManager): ?>
                             <th>Archive Status</th>
+                            <?php endif; ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($mails as $mail): ?>
+                        <?php foreach ($conversations as $conv): ?>
                         <tr>
-                            <td><?= htmlspecialchars($mail['ref_number']) ?></td>
-                            <td><?= htmlspecialchars($mail['subject']) ?></td>
-                            <td><?= htmlspecialchars($mail['sender_name']) ?> 
-                                (<?= htmlspecialchars($mail['sender_role']) ?>)
-                            </td>
+                            <td><?= htmlspecialchars($conv['ref_number']) ?></td>
+                            <td><?= htmlspecialchars($conv['subject']) ?></td>
+                            <td><?= htmlspecialchars($conv['sender_name']) ?> (<?= htmlspecialchars($conv['sender_role']) ?>)</small></td>
                             <?php if ($isTopManager): ?>
-                            <td><?= nl2br(htmlspecialchars($mail['recipients_list'] ?? '-')) ?></td>
+                            <td><?= nl2br(htmlspecialchars($conv['recipients_list'] ?? '-')) ?></td>
                             <?php endif; ?>
-                            <td><span class="badge bg-secondary"><?= ucfirst($mail['type']) ?></span></td>
+                            <td><span class="badge bg-secondary"><?= ucfirst($conv['type']) ?></span></td>
+                            <td><span class="badge bg-<?= $conv['priority']=='urgent'?'danger':($conv['priority']=='important'?'warning':'secondary') ?>"><?= ucfirst($conv['priority']) ?></span></td>
+                            <td><?= date('d/m/Y H:i', strtotime($conv['created_at'])) ?></td>
                             <td>
-                                <span class="badge bg-<?= $mail['priority']=='urgent'?'danger':($mail['priority']=='important'?'warning':'secondary') ?>">
-                                    <?= ucfirst($mail['priority']) ?>
-                                </span>
-                            </td>
-                            <td><?= date('d/m/Y H:i', strtotime($mail['created_at'])) ?></td>
-                            <td>
-                                <?php if ($mail['is_archived_global'] ?? false): ?>
-                                    <span class="badge bg-success">Archived (opened by someone)</span>
+                                <?php if ($conv['reply_count'] > 0): ?>
+                                    <span class="badge bg-info"><?= $conv['reply_count'] ?> response(s)</span>
+                                    <a href="view_conversation.php?id=<?= $conv['id'] ?>" class="btn btn-sm btn-outline-primary mt-1">View conversation</a>
                                 <?php else: ?>
-                                    <span class="badge bg-info">Unread (no one opened)</span>
+                                    <span class="text-muted">No responses</span>
                                 <?php endif; ?>
                             </td>
+                            <?php if ($isTopManager): ?>
                             <td>
-                                <?php if ($isTopManager): ?>
-                                    <a href="view_mail.php?id=<?= $mail['id'] ?>" class="btn btn-sm btn-primary">View</a>
-                                    <?php if (!empty($mail['opened_by_you_date'])): ?>
-                                        <br><small class="text-muted">Opened: <?= date('d/m/Y H:i', strtotime($mail['opened_by_you_date'])) ?></small>
-                                    <?php endif; ?>
+                                <?php if ($conv['is_archived_global'] ?? false): ?>
+                                    <span class="badge bg-success">Archived (opened)</span>
                                 <?php else: ?>
-                                    <a href="view_mail.php?id=<?= $mail['id'] ?>" class="btn btn-sm btn-primary">View</a>
-                                    <a href="?restore=<?= $mail['id'] ?>" class="btn btn-sm btn-success">Restore</a>
-                                    <a href="?delete=<?= $mail['id'] ?>" 
-                                       class="btn btn-sm btn-danger" 
-                                       onclick="return confirm('Permanently delete?')">Delete</a>
+                                    <span class="badge bg-warning text-dark">Inbox (not opened)</span>
+                                <?php endif; ?>
+                            </td>
+                            <?php endif; ?>
+                            <td>
+                                <a href="view_mail.php?id=<?= $conv['id'] ?>" class="btn btn-sm btn-primary">View</a>
+                                <!-- DELETE BUTTON FOR ALL MANAGERS (removed sender check) -->
+                                <a href="?delete_mail=<?= $conv['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this conversation permanently? This action cannot be undone.')">Delete</a>
+                                <?php if (!$isTopManager): ?>
+                                    <a href="?restore=<?= $conv['id'] ?>" class="btn btn-sm btn-success">Restore</a>
                                 <?php endif; ?>
                             </td>
                         </tr>
@@ -228,7 +224,7 @@ if ($isTopManager) {
                 </table>
             </div>
             <?php else: ?>
-                <div class="alert alert-info">No mails found.</div>
+                <div class="alert alert-info">No archived conversations found.</div>
             <?php endif; ?>
         </div>
     </div>

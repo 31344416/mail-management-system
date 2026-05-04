@@ -2,6 +2,7 @@
 // session_start(); // <-- REMOVED (session already started in config.php)
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireRole('admin');
+requirePasswordChange();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/config.php';
 
 // ========== EMBEDDED HELPER FUNCTIONS ==========
@@ -31,7 +32,7 @@ function getUserForEdit($pdo, $id) {
 function addUser($pdo, $data, $customPassword) {
     $password = !empty($customPassword) ? $customPassword : 'admin123';
     $hash = password_hash($password, PASSWORD_DEFAULT);
-    $stmt = $pdo->prepare("INSERT INTO users (username, password, email, full_name, structure_id, role, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)");
+    $stmt = $pdo->prepare("INSERT INTO users (username, password, email, full_name, structure_id, role, is_active, password_changed) VALUES (?, ?, ?, ?, ?, ?, 1, 0)");
     return $stmt->execute([$data['username'], $hash, $data['email'], $data['full_name'], $data['structure_id'], $data['role']]);
 }
 

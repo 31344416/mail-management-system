@@ -2,6 +2,7 @@
 session_start();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireRole('admin');
+requirePasswordChange();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/controllers/AdminPrivilegesController.php';
 
 // CSRF Token

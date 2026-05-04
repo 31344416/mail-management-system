@@ -20,9 +20,9 @@ function getDashboardData($pdo, $userId) {
     $stmt->execute([$userId]);
     $sentCount = $stmt->fetchColumn();
     
-    // Notifications (opened_by_recipient)
+    // Notifications (TODAY only, unread)
     $trackModel = new Tracking($pdo);
-    $notifications = $trackModel->getNotifications($userId);
+    $notifications = $trackModel->getTodayNotifications($userId);
     
     // Recent mails (last 10)
     $sql = "SELECT m.*, u.full_name as sender_name, mr.is_read 

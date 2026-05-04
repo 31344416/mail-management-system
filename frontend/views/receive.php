@@ -2,6 +2,7 @@
 session_start();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireLogin();
+requirePasswordChange();
 
 if (hasRole('admin')) {
     header('Location: dashboard.php');
@@ -91,7 +92,7 @@ $mails = getReceivedMails($pdo, $_SESSION['user_id'], $search, $priority);
                                     <tr>
                                         <td><?= htmlspecialchars($mail['ref_number']) ?></td>
                                         <td><?= htmlspecialchars($mail['subject']) ?></td>
-                                        <td><?= htmlspecialchars($mail['sender_name']) ?> (<?= htmlspecialchars($mail['sender_role']) ?>)</td>
+                                        <td><?= htmlspecialchars($mail['sender_name']) ?> (<?= htmlspecialchars($mail['sender_role']) ?>)</small></td>
                                         <td><span class="badge bg-secondary"><?= ucfirst($mail['type']) ?></span></td>
                                         <td>
                                             <span class="badge bg-<?= $mail['priority']=='urgent'?'danger':($mail['priority']=='important'?'warning':'secondary') ?>">
@@ -99,10 +100,18 @@ $mails = getReceivedMails($pdo, $_SESSION['user_id'], $search, $priority);
                                             </span>
                                         </td>
                                         <td><?= date('d/m/Y H:i', strtotime($mail['created_at'])) ?></td>
-                                        <td><?= $mail['is_read'] ? '<span class="badge bg-success">Read</span>' : '<span class="badge bg-info">Unread</span>' ?></td>
+                                        <td>
+                                            <?php if ($mail['is_read']): ?>
+                                                <span class="badge bg-success">Read</span>
+                                            <?php else: ?>
+                                                <span class="badge bg-info">Unread</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td>
                                             <a href="view_mail.php?id=<?= $mail['id'] ?>" class="btn btn-sm btn-primary">View</a>
-                                            <a href="archive.php?action=archive&id=<?= $mail['id'] ?>" class="btn btn-sm btn-warning">Archive</a>
+                                            <?php if ($mail['sender_id'] == $_SESSION['user_id']): ?>
+                                                <a href="archive.php?delete_mail=<?= $mail['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this mail permanently? This action cannot be undone.')">Delete</a>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>

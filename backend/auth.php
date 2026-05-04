@@ -42,4 +42,17 @@ function canReplyToType($type) {
         default: return false;
     }
 }
+
+function requirePasswordChange() {
+    if (isset($_SESSION['force_password_change']) && $_SESSION['force_password_change'] === true) {
+        header('Location: ../frontend/views/change_password.php');
+        exit;
+    }
+}
+
+function mustChangePassword($pdo, $userId) {
+    $stmt = $pdo->prepare("SELECT password_changed FROM users WHERE id = ?");
+    $stmt->execute([$userId]);
+    return $stmt->fetchColumn() == 0;
+}
 ?>

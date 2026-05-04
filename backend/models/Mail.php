@@ -104,14 +104,14 @@ class Mail {
     }
     
     public function getReplies($mailId) {
-        $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name 
-                                     FROM mails m 
-                                     JOIN users u ON m.sender_id = u.id 
-                                     WHERE m.parent_id = ? 
-                                     ORDER BY m.created_at ASC");
-        $stmt->execute([$mailId]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
+    $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name, u.role as sender_role
+                                 FROM mails m 
+                                 JOIN users u ON m.sender_id = u.id 
+                                 WHERE m.parent_id = ? 
+                                 ORDER BY m.created_at ASC");
+    $stmt->execute([$mailId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
     
     public function getOriginal($mailId) {
         $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name 

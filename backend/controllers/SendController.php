@@ -37,7 +37,7 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
     $success = '';
     
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        // CSRF token check (à ajouter)
+        // CSRF token check
         if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
             $error = "Erreur de sécurité (CSRF). Veuillez recharger la page.";
             return ['error' => $error, 'success' => ''];
@@ -109,10 +109,16 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
                         $trackModel->add($mailId, $recipient_id, 'received');
                         
                         if ($replyToId > 0) {
-                            // Archive automatique pour le répondant
+                            // Archive original for the replier (current user)
                             $mailModel->archiveForUser($replyToId, $userId);
                             $trackModel->add($replyToId, $userId, 'archived_after_reply');
-                            // On n'archive plus pour l'expéditeur original (trop intrusif)
+                            
+                            // NEW: Also archive original for the original sender (if different)
+                            $origSenderId = $mailModel->getSenderId($replyToId);
+                            if ($origSenderId && $origSenderId != $userId) {
+                                $mailModel->archiveForUser($replyToId, $origSenderId);
+                                $trackModel->add($replyToId, $origSenderId, 'archived_by_reply');
+                            }
                         }
                         
                         $_SESSION['flash_success'] = "Mail envoyé avec succès. Réf : $refNumber";
