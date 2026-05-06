@@ -52,6 +52,18 @@ extract($data);
             box-shadow: 0 20px 35px rgba(0, 0, 0, 0.2);
             border: 1px solid rgba(26, 188, 156, 0.3);
         }
+        
+        .admin-link {
+            display: inline-block;
+            margin: 0.5rem 0;
+            color: #181a19;
+            text-decoration: none;
+            transition: 0.2s;
+        }
+        .admin-link:hover {
+            color: #080808;
+            text-decoration: underline;
+        }
     </style>
     <?php endif; ?>
 </head>
@@ -89,7 +101,7 @@ extract($data);
         <!-- Main Content -->
         <div class="col-md-10">
             <?php if (!hasRole('admin')): ?>
-                <!-- Non-admin content -->
+                <!-- Non-admin content (unchanged) -->
                 <div class="p-4">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h2>Welcome, <?= htmlspecialchars($_SESSION['full_name']) ?>!</h2>
@@ -179,16 +191,19 @@ extract($data);
                     </div>
                 </div>
             <?php else: ?>
-                <!-- Admin Centered Welcome Card with Background -->
+                <!-- Admin Centered Welcome Card with clickable links -->
                 <div class="admin-content-wrapper">
                     <div class="welcome-card">
                         <i class="fas fa-user-shield fa-4x text-primary mb-3"></i>
                         <h1>Welcome, <?= htmlspecialchars($_SESSION['full_name']) ?>!</h1>
                         <span class="role-badge badge bg-primary">Administrator</span>
                         <p class="mt-3">
-                            <i class="fas fa-building"></i> Manage structures<br>
-                            <i class="fas fa-users"></i> Manage employees<br>
-                            <i class="fas fa-key"></i> Manage privileges
+                            <i class="fas fa-building"></i> 
+                            <a href="admin_structures.php" class="admin-link">Manage structures</a><br>
+                            <i class="fas fa-users"></i> 
+                            <a href="admin_users.php" class="admin-link">Manage employees</a><br>
+                            <i class="fas fa-key"></i> 
+                            <a href="admin_privileges.php" class="admin-link">Manage privileges</a>
                         </p>
                     </div>
                 </div>

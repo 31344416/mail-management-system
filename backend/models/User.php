@@ -12,7 +12,6 @@ class User {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
-    // Méthode corrigée avec jointure pour récupérer structure_name
     public function findById($id) {
         $stmt = $this->pdo->prepare("
             SELECT u.*, s.name as structure_name 
@@ -24,7 +23,6 @@ class User {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
-    // Alias pour compatibilité avec ProfileController
     public function getById($id) {
         return $this->findById($id);
     }
@@ -42,18 +40,34 @@ class User {
                 LEFT JOIN structures s ON u.structure_id = s.id 
                 WHERE u.role != 'admin'";
         $params = [];
+
         if (!empty($search)) {
-            $sql .= " AND (u.username LIKE ? OR u.full_name LIKE ? OR u.email LIKE ?)";
-            $params = ["%$search%", "%$search%", "%$search%"];
+            // Split search into individual words
+            $words = preg_split('/\s+/', trim($search));
+            $fullNameConditions = [];
+            foreach ($words as $word) {
+                $fullNameConditions[] = "LOWER(u.full_name) LIKE LOWER(?)";
+                $params[] = "%$word%";
+            }
+            $fullNameSql = implode(' OR ', $fullNameConditions);
+
+            // Match username, email, or any word in full_name
+            $sql .= " AND (LOWER(u.username) LIKE LOWER(?) 
+                        OR LOWER(u.email) LIKE LOWER(?) 
+                        OR ($fullNameSql))";
+            $params[] = "%$search%";  // for username
+            $params[] = "%$search%";  // for email
+            // full_name word parameters already added
         }
-        $sql .= " ORDER BY u.full_name";
+
+        $sql .= " ORDER BY SUBSTRING_INDEX(u.full_name, ' ', -1) ASC";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
     public function create($data, $passwordHash) {
-        $stmt = $this->pdo->prepare("INSERT INTO users (username, password, email, full_name, structure_id, role, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)");
+        $stmt = $this->pdo->prepare("INSERT INTO users (username, password, email, full_name, structure_id, role, is_active, password_changed) VALUES (?, ?, ?, ?, ?, ?, 1, 0)");
         return $stmt->execute([
             $data['username'], $passwordHash, $data['email'],
             $data['full_name'], $data['structure_id'], $data['role']

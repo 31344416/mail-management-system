@@ -7,15 +7,18 @@ class Mail {
     }
     
     public function create($data) {
-        $sql = "INSERT INTO mails (ref_number, subject, content, type, priority, sender_id, file_path, parent_id, status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sent')";
+        $sql = "INSERT INTO mails (ref_number, subject, content, type, priority, sender_id, file_path, parent_id, status, target_structure_id) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?)";
         $stmt = $this->pdo->prepare($sql);
         return $stmt->execute([
             $data['ref_number'], $data['subject'], $data['content'],
             $data['type'], $data['priority'], $data['sender_id'],
-            $data['file_path'], $data['parent_id']
+            $data['file_path'], $data['parent_id'], $data['target_structure_id']
         ]);
     }
+    
+    // ... rest of the class unchanged (findById, getReceivedForUser, etc.)
+    // I'll include the full class for completeness, but the only change is the create method and the addition of the column in the INSERT.
     
     public function findById($id) {
         $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name, u.role as sender_role
@@ -49,10 +52,6 @@ class Mail {
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
-    /**
-     * Get all archived mails for a user (both as sender and as recipient)
-     * Useful for a unified archive view.
-     */
     public function getArchivedForUser($userId, $search = '') {
         $sql = "SELECT DISTINCT m.*, u.full_name as sender_name, u.role as sender_role,
                        mr.is_read, mr.is_archived
@@ -104,14 +103,14 @@ class Mail {
     }
     
     public function getReplies($mailId) {
-    $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name, u.role as sender_role
-                                 FROM mails m 
-                                 JOIN users u ON m.sender_id = u.id 
-                                 WHERE m.parent_id = ? 
-                                 ORDER BY m.created_at ASC");
-    $stmt->execute([$mailId]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
+        $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name, u.role as sender_role
+                                     FROM mails m 
+                                     JOIN users u ON m.sender_id = u.id 
+                                     WHERE m.parent_id = ? 
+                                     ORDER BY m.created_at ASC");
+        $stmt->execute([$mailId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
     
     public function getOriginal($mailId) {
         $stmt = $this->pdo->prepare("SELECT m.*, u.full_name as sender_name 
@@ -135,11 +134,9 @@ class Mail {
         $count = $stmt->fetchColumn();
         $next = str_pad($count + 1, 4, '0', STR_PAD_LEFT);
         $candidate = "$next-$structureCode-$year";
-        // Ensure uniqueness (just in case)
         $check = $this->pdo->prepare("SELECT COUNT(*) FROM mails WHERE ref_number = ?");
         $check->execute([$candidate]);
         if ($check->fetchColumn() == 0) return $candidate;
-        // fallback: timestamp
         return date('YmdHis') . "-$structureCode-$year";
     }
 }

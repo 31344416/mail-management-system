@@ -2,9 +2,22 @@
 require_once __DIR__ . '/../models/Mail.php';
 require_once __DIR__ . '/../models/Tracking.php';
 
-// ---- Normal users (Middle/End) archived mails (original + replies grouped) ----
+function getDescendantStructureIds($pdo, $parentId) {
+    $ids = [];
+    $queue = [$parentId];
+    while (!empty($queue)) {
+        $current = array_shift($queue);
+        $ids[] = $current;
+        $stmt = $pdo->prepare("SELECT id FROM structures WHERE parent_id = ?");
+        $stmt->execute([$current]);
+        $children = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $queue = array_merge($queue, $children);
+    }
+    return $ids;
+}
+
 function getGroupedArchivedMails($pdo, $userId, $search = '') {
-    // Get all conversation IDs (original mail that the user has archived as recipient)
+    // unchanged from your code (except I'll keep it as is)
     $sql = "
         SELECT DISTINCT 
             CASE 
@@ -51,7 +64,6 @@ function getGroupedArchivedMails($pdo, $userId, $search = '') {
     $stmt->execute($params);
     $allMails = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Group by conversation (original mail)
     $conversations = [];
     foreach ($allMails as $mail) {
         $origId = $mail['parent_id'] ?? $mail['id'];
@@ -66,7 +78,6 @@ function getGroupedArchivedMails($pdo, $userId, $search = '') {
         }
     }
     
-    // Apply search filter (if any)
     $result = array_values($conversations);
     if (!empty($search)) {
         $result = array_filter($result, function($conv) use ($search) {
@@ -75,30 +86,30 @@ function getGroupedArchivedMails($pdo, $userId, $search = '') {
                    stripos($conv['sender_name'], $search) !== false;
         });
     }
-    
-    // Sort by creation date desc
     usort($result, function($a, $b) {
         return strtotime($b['created_at']) <=> strtotime($a['created_at']);
     });
-    
     return array_values($result);
 }
 
-// ---- Global archive for Top Manager (grouped by conversation) ----
 function getConversationsForTopManager($pdo, $userId, $search = '', $type = '', $priority = '', $status = '') {
-    // Get all original mails (parent_id IS NULL) with reply count
+    // Get user's structure_id
+    $stmt = $pdo->prepare("SELECT structure_id FROM users WHERE id = ?");
+    $stmt->execute([$userId]);
+    $userStructId = $stmt->fetchColumn();
+    
+    // Determine allowed target structures
+    $allowedStructIds = [];
+    $useRestriction = false;
+    if ($userStructId != 1) { // assuming 1 is root (SONELGAZ)
+        $allowedStructIds = getDescendantStructureIds($pdo, $userStructId);
+        $useRestriction = !empty($allowedStructIds);
+    }
+    
     $sql = "
         SELECT 
-            m.id,
-            m.ref_number,
-            m.subject,
-            m.content,
-            m.type,
-            m.priority,
-            m.created_at,
-            m.parent_id,
-            u.full_name AS sender_name,
-            u.role AS sender_role,
+            m.id, m.sender_id, m.ref_number, m.subject, m.content, m.type, m.priority, m.created_at, m.parent_id,
+            u.full_name AS sender_name, u.role AS sender_role,
             (SELECT COUNT(*) FROM mails WHERE parent_id = m.id) AS reply_count,
             (SELECT GROUP_CONCAT(CONCAT(u2.full_name, ' (', u2.role, ')') SEPARATOR ', ')
              FROM mail_recipients mr2
@@ -111,16 +122,22 @@ function getConversationsForTopManager($pdo, $userId, $search = '', $type = '', 
     ";
     $params = [];
     
+    if ($useRestriction) {
+        $placeholders = implode(',', array_fill(0, count($allowedStructIds), '?'));
+        $sql .= " AND m.target_structure_id IN ($placeholders)";
+        $params = array_merge($params, $allowedStructIds);
+    }
+    
     if (!empty($search)) {
         $sql .= " AND (m.ref_number LIKE ? OR m.subject LIKE ? OR u.full_name LIKE ?)";
         $like = "%$search%";
-        $params = [$like, $like, $like];
+        $params[] = $like; $params[] = $like; $params[] = $like;
     }
-    if (!empty($type)) {
+    if (!empty($type) && in_array($type, ['demande','orientation','rapport','reponse'])) {
         $sql .= " AND m.type = ?";
         $params[] = $type;
     }
-    if (!empty($priority)) {
+    if (!empty($priority) && in_array($priority, ['normal','important','urgent'])) {
         $sql .= " AND m.priority = ?";
         $params[] = $priority;
     }
@@ -136,7 +153,6 @@ function getConversationsForTopManager($pdo, $userId, $search = '', $type = '', 
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// ---- Regular archived mails (for normal users, individual) - kept for compatibility ----
 function getArchivedMails($pdo, $userId, $search = '') {
     $mailModel = new Mail($pdo);
     return $mailModel->getReceivedForUser($userId, true, $search);

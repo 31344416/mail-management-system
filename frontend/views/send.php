@@ -35,8 +35,8 @@ if ($replyToId > 0) {
 }
 
 $result = handleSendMail($pdo, $userId, $allowedTypes, $replyToId);
-$error = $result['error'] ?? '';
-$success = $result['success'] ?? '';
+$error = isset($result['error']) ? $result['error'] : '';
+$success = isset($result['success']) ? $result['success'] : '';
 
 $allStructures = getAllStructuresForDropdown($pdo);
 ?>
@@ -90,7 +90,7 @@ $allStructures = getAllStructuresForDropdown($pdo);
                                 <option value="">-- Select Division --</option>
                                 <?php foreach ($allStructures as $struct): ?>
                                     <option value="<?= $struct['id'] ?>">
-                                        <?= htmlspecialchars($struct['name']) ?> (<?= htmlspecialchars($struct['code']) ?>)
+                                        <?= htmlspecialchars($struct['name']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -171,10 +171,8 @@ document.getElementById('divisionSelect').addEventListener('change', function() 
         return;
     }
     
-    // Show loading state
     recipientSelect.innerHTML = '<option value="">Loading users...</option>';
     
-    // Use absolute path to API
     var apiUrl = '/mail_management/backend/api/getUsersByDivision.php?division_id=' + divisionId;
     
     fetch(apiUrl)

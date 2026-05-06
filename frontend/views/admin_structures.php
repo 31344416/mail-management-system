@@ -49,13 +49,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $success = "Structure updated successfully.";
                     $editMode = false;
                 } else {
-                    $error = "Failed to update structure.";
+                    $error = "Failed to update structure. The code may already exist under the same parent.";
                 }
             } else {
                 if (addStructure($pdo, $data)) {
                     $success = "Structure added successfully.";
                 } else {
-                    $error = "Failed to add structure.";
+                    $error = "Failed to add structure. A structure with the same code already exists under this parent.";
                 }
             }
         }
@@ -71,33 +71,104 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         $editCode = $struct['code'];
         $editName = $struct['name'];
         $editParentId = $struct['parent_id'];
-        $editAddress = $struct['address'];
+        $editAddress = isset($struct['address']) ? $struct['address'] : '';
     }
 }
 
+// Get all structures (for search or full list)
 $structures = getAllStructures($pdo, $search);
-$allStructs = getAllStructuresForDropdown($pdo);
-$isSearching = !empty($search);
 
+// Build dropdown options for parent selection (excludes current structure and its descendants when editing)
+function getParentOptions($pdo, $currentId = 0) {
+    $stmt = $pdo->query("SELECT id, name, parent_id FROM structures ORDER BY name");
+    $all = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (empty($all)) return array();
+
+    // Build a map of id -> parent_id
+    $parentMap = array();
+    $nameMap = array();
+    foreach ($all as $s) {
+        $parentMap[$s['id']] = $s['parent_id'];
+        $nameMap[$s['id']] = $s['name'];
+    }
+
+    // If editing, collect all descendant IDs to exclude
+    $excludeIds = array();
+    if ($currentId > 0) {
+        // Recursive function to get all children (descendants)
+        $getChildren = function($id) use (&$getChildren, $parentMap) {
+            $children = array();
+            foreach ($parentMap as $childId => $parentId) {
+                if ($parentId == $id) {
+                    $children[] = $childId;
+                    $children = array_merge($children, $getChildren($childId));
+                }
+            }
+            return $children;
+        };
+        $excludeIds = $getChildren($currentId);
+        $excludeIds[] = $currentId; // also exclude itself
+    }
+
+    // Build full path for each structure, excluding forbidden ones
+    $options = array();
+    foreach ($all as $s) {
+        if (in_array($s['id'], $excludeIds)) continue;
+
+        // Build full path by walking up
+        $path = array();
+        $current = $s['id'];
+        $max = 100;
+        while ($current !== null && $max-- > 0) {
+            $path[] = $nameMap[$current];
+            $current = isset($parentMap[$current]) ? $parentMap[$current] : null;
+        }
+        $path = array_reverse($path);
+        $fullPath = implode(' → ', $path);
+        $options[] = array('id' => $s['id'], 'name' => $fullPath);
+    }
+
+    // Sort by full path
+    usort($options, function($a, $b) { return strcmp($a['name'], $b['name']); });
+    return $options;
+}
+
+$parentOptions = getParentOptions($pdo, $editId);
+
+// =========================================================================
+// IMPORTANT: Do NOT redefine buildStructureTreeHtml() here!
+// It is already provided by AdminStructuresController.php
+// =========================================================================
+
+$isSearching = !empty($search);
 if ($isSearching) {
     $tableHtml = '';
     if (count($structures) > 0) {
         foreach ($structures as $struct) {
+            // Get parent name safely
+            $parentName = '-';
+            if ($struct['parent_id']) {
+                $stmtParent = $pdo->prepare("SELECT name FROM structures WHERE id = ?");
+                $stmtParent->execute([$struct['parent_id']]);
+                $parentName = $stmtParent->fetchColumn();
+                if ($parentName === false) $parentName = '-';
+            }
             $tableHtml .= '<tr>';
             $tableHtml .= '<td>' . htmlspecialchars($struct['code']) . '</td>';
             $tableHtml .= '<td>' . htmlspecialchars($struct['name']) . '</td>';
-            $tableHtml .= '<td>' . ($struct['parent_id'] ?: '-') . '</td>';
-            $tableHtml .= '<td>' . htmlspecialchars($struct['address'] ?: '-') . '</td>';
+            $tableHtml .= '<td>' . htmlspecialchars($parentName) . '</td>';
+            $tableHtml .= '<td>' . htmlspecialchars(isset($struct['address']) ? $struct['address'] : '-') . '</td>';
             $tableHtml .= '<td>
                             <a href="?edit=' . $struct['id'] . '" class="btn btn-sm btn-primary">Edit</a>
-                            <a href="?delete=' . $struct['id'] . '" class="btn btn-sm btn-danger" onclick="return confirm(\'Are you sure you want to delete this structure?\')">Delete</a>
-                          </td>';
+                            <a href="?delete=' . $struct['id'] . '" class="btn btn-sm btn-danger" onclick="return confirm(\'Delete this structure?\')">Delete</a>
+                           </div>';
             $tableHtml .= '</tr>';
         }
     } else {
         $tableHtml = '<tr><td colspan="5" class="text-center">No structures found matching "' . htmlspecialchars($search) . '"</td></tr>';
     }
 } else {
+    // Use the controller's function to build the hierachical tree
     $tableHtml = buildStructureTreeHtml($structures);
     if (empty($tableHtml)) {
         $tableHtml = '<tr><td colspan="5" class="text-center">No structures found.</td></tr>';
@@ -170,10 +241,10 @@ if ($isSearching) {
                             </div>
                             <div class="col-md-3">
                                 <select name="parent_id" class="form-select">
-                                    <option value="">-- No Parent --</option>
-                                    <?php foreach($allStructs as $s): ?>
-                                        <option value="<?= $s['id'] ?>" <?= $editParentId == $s['id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($s['name']) ?>
+                                    <option value="">-- No Parent (Root) --</option>
+                                    <?php foreach($parentOptions as $opt): ?>
+                                        <option value="<?= $opt['id'] ?>" <?= $editParentId == $opt['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($opt['name']) ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
@@ -211,7 +282,7 @@ if ($isSearching) {
                                 <tr>
                                     <th>Code</th>
                                     <th>Name</th>
-                                    <th>Parent ID</th>
+                                    <th>Parent</th>
                                     <th>Address</th>
                                     <th>Actions</th>
                                 </tr>

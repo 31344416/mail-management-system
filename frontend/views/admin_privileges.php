@@ -14,7 +14,6 @@ $error = '';
 $success = '';
 $search = $_GET['search'] ?? '';
 
-// Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
         $error = "CSRF error. Please reload the page.";
@@ -75,12 +74,12 @@ $users = getAllUsersForPrivileges($pdo, $search);
             <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
             <?php if ($success): ?><div class="alert alert-success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
 
-            <!-- Search Form -->
+            <!-- Search Form (case‑insensitive) -->
             <form method="GET" class="mb-4">
                 <div class="row g-2">
                     <div class="col-md-8">
                         <input type="text" name="search" class="form-control" 
-                               placeholder="Search by username, full name or email" 
+                               placeholder="Search by username, full name or email (case‑insensitive)" 
                                value="<?= htmlspecialchars($search) ?>">
                     </div>
                     <div class="col-md-2"><button type="submit" class="btn btn-primary w-100">Search</button></div>
@@ -142,18 +141,27 @@ $users = getAllUsersForPrivileges($pdo, $search);
                                         </form>
                                     </td>
                                     <td>
-                                        <form method="POST" class="d-inline">
-                                            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-                                            <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
-                                            <button type="submit" name="toggle_user" class="btn btn-sm btn-info">
-                                                <?= $u['is_active'] ? 'Suspend' : 'Activate' ?>
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                                Manage ▼
                                             </button>
-                                            <button type="submit" name="reset_password" 
-                                                    class="btn btn-sm btn-warning" 
-                                                    onclick="return confirm('Reset password to admin123?')">
-                                                Reset Password
-                                            </button>
-                                        </form>
+                                            <ul class="dropdown-menu">
+                                                <li>
+                                                    <form method="POST" style="display: inline; width: 100%;">
+                                                        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                                                        <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
+                                                        <button type="submit" name="reset_password" class="dropdown-item" onclick="return confirm('Reset password to admin123?')">Reset Password</button>
+                                                    </form>
+                                                </li>
+                                                <li>
+                                                    <form method="POST" style="display: inline; width: 100%;">
+                                                        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                                                        <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
+                                                        <button type="submit" name="toggle_user" class="dropdown-item"><?= $u['is_active'] ? 'Suspend' : 'Activate' ?></button>
+                                                    </form>
+                                                </li>
+                                            </ul>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>

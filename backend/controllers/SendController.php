@@ -3,14 +3,12 @@ require_once __DIR__ . '/../models/Mail.php';
 require_once __DIR__ . '/../models/Tracking.php';
 require_once __DIR__ . '/../models/Structure.php';
 
-// Génération robuste avec transaction et fallback
 function generateUniqueReferenceNumber($pdo, $structureCode) {
     $year = date('Y');
     $maxAttempts = 3;
     for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
         $pdo->beginTransaction();
         try {
-            // Verrouillage de la table pour éviter les collisions
             $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE ref_number LIKE ? FOR UPDATE");
             $stmt->execute(["%-$structureCode-$year"]);
             $count = $stmt->fetchColumn();
@@ -28,7 +26,6 @@ function generateUniqueReferenceNumber($pdo, $structureCode) {
             $pdo->rollBack();
         }
     }
-    // Fallback : timestamp
     return date('YmdHis') . "-$structureCode-$year";
 }
 
@@ -37,7 +34,6 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
     $success = '';
     
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        // CSRF token check
         if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
             $error = "Erreur de sécurité (CSRF). Veuillez recharger la page.";
             return ['error' => $error, 'success' => ''];
@@ -66,7 +62,6 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
                 $targetCode = $targetStruct['code'];
                 $refNumber = generateUniqueReferenceNumber($pdo, $targetCode);
                 
-                // Gestion du fichier avec validation
                 $filePath = null;
                 if (isset($_FILES['attachment']) && $_FILES['attachment']['error'] === UPLOAD_ERR_OK) {
                     $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'png', 'zip'];
@@ -99,7 +94,8 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
                         'priority' => $priority,
                         'sender_id' => $userId,
                         'file_path' => $filePath,
-                        'parent_id' => $parentId
+                        'parent_id' => $parentId,
+                        'target_structure_id' => $target_structure_id
                     ];
                     if ($mailModel->create($mailData)) {
                         $mailId = $pdo->lastInsertId();
@@ -109,11 +105,8 @@ function handleSendMail($pdo, $userId, $allowedTypes, $replyToId) {
                         $trackModel->add($mailId, $recipient_id, 'received');
                         
                         if ($replyToId > 0) {
-                            // Archive original for the replier (current user)
                             $mailModel->archiveForUser($replyToId, $userId);
                             $trackModel->add($replyToId, $userId, 'archived_after_reply');
-                            
-                            // NEW: Also archive original for the original sender (if different)
                             $origSenderId = $mailModel->getSenderId($replyToId);
                             if ($origSenderId && $origSenderId != $userId) {
                                 $mailModel->archiveForUser($replyToId, $origSenderId);
@@ -140,8 +133,59 @@ function getRecipients($pdo, $userId) {
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+/**
+ * Returns all structures with a dash‑separated hierarchical code path (excluding root "SONA").
+ * Compatible with PHP 5.2+ (no closures, safe array access).
+ */
 function getAllStructuresForDropdown($pdo) {
-    $stmt = $pdo->query("SELECT id, code, name FROM structures ORDER BY name");
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $stmt = $pdo->query("SELECT id, code, name, parent_id FROM structures ORDER BY name");
+    $structures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (empty($structures)) return array();
+
+    // Build lookup maps
+    $parentMap = array();
+    $codeMap = array();
+    $nameMap = array();
+    foreach ($structures as $s) {
+        $parentMap[$s['id']] = $s['parent_id'];
+        $codeMap[$s['id']] = $s['code'];
+        $nameMap[$s['id']] = $s['name'];
+    }
+
+    $result = array();
+    foreach ($structures as $s) {
+        $id = $s['id'];
+        $pathCodes = array();
+        $current = $id;
+        $max = 100;
+        // Walk up the parent chain
+        while ($current !== null && $max-- > 0) {
+            // Ensure the current ID exists in our maps
+            if (!isset($codeMap[$current])) break;
+            $code = $codeMap[$current];
+            // Exclude root (SONELGAZ code 'SONA') – change if your root code is different
+            if ($code !== 'SONA') {
+                array_unshift($pathCodes, $code);
+            }
+            $current = isset($parentMap[$current]) ? $parentMap[$current] : null;
+        }
+        $codePath = implode('-', $pathCodes);
+        // If no path (e.g., root itself), just show the name
+        if ($codePath === '') {
+            $display = htmlspecialchars($nameMap[$id]);
+        } else {
+            $display = $codePath . ' (' . htmlspecialchars($nameMap[$id]) . ')';
+        }
+        $result[] = array('id' => $id, 'name' => $display);
+    }
+
+    // Manual sort by name (PHP 5.2 compatible – no closures)
+    usort($result, 'compareStructureNames');
+    return $result;
+}
+
+// Helper comparison function for usort
+function compareStructureNames($a, $b) {
+    return strcmp($a['name'], $b['name']);
 }
 ?>

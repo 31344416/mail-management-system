@@ -16,10 +16,10 @@ $userId = $_SESSION['user_id'];
 $isTopManager = hasRole('top_manager');
 $error = '';
 $success = '';
-$search = $_GET['search'] ?? '';
-$type = $_GET['type'] ?? '';
-$priority = $_GET['priority'] ?? '';
-$status = $_GET['status'] ?? '';
+$search = isset($_GET['search']) ? $_GET['search'] : '';
+$type = isset($_GET['type']) ? $_GET['type'] : '';
+$priority = isset($_GET['priority']) ? $_GET['priority'] : '';
+$status = isset($_GET['status']) ? $_GET['status'] : '';
 
 // Handle DELETE for sender (mistake correction) - now available for all managers
 if (isset($_GET['delete_mail']) && is_numeric($_GET['delete_mail'])) {
@@ -65,9 +65,14 @@ if (!$isTopManager) {
 
 // Retrieve grouped conversations based on role
 if ($isTopManager) {
-    $conversations = getConversationsForTopManager($pdo, $userId, $search, $type, $priority, $status);
+    $conversationsRaw = getConversationsForTopManager($pdo, $userId, $search, $type, $priority, $status);
     // Only show conversations that have been archived (opened by someone)
-    $conversations = array_values(array_filter($conversations, fn($c) => $c['is_archived_global'] == true));
+    $conversations = array();
+    foreach ($conversationsRaw as $c) {
+        if (!empty($c['is_archived_global'])) {
+            $conversations[] = $c;
+        }
+    }
 } else {
     $conversations = getGroupedArchivedMails($pdo, $userId, $search);
 }
@@ -82,6 +87,35 @@ if ($isTopManager) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="../assets/css/style.css">
+    <style>
+        /* One‑line filter bar */
+        .filter-bar {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        .filter-bar .form-control,
+        .filter-bar .form-select,
+        .filter-bar .btn {
+            flex: 0 0 auto;
+            width: auto;
+        }
+        .filter-bar .search-input {
+            flex: 1 1 250px;
+            min-width: 150px;
+        }
+        /* On very small screens, allow wrapping */
+        @media (max-width: 1200px) {
+            .filter-bar {
+                flex-wrap: wrap;
+            }
+            .filter-bar .search-input {
+                flex: 1 1 100%;
+            }
+        }
+    </style>
 </head>
 <body>
 <div class="container-fluid">
@@ -108,7 +142,7 @@ if ($isTopManager) {
         <!-- Main Content -->
         <div class="col-md-10 p-4">
             <h2><i class="fas <?= $isTopManager ? 'fa-globe' : 'fa-archive' ?>"></i> 
-                <?= $isTopManager ? 'Global Archive (Conversations)' : 'My Archived Conversations' ?>
+                <?= $isTopManager ? 'Global Archive ' : 'My Archived' ?>
             </h2>
 
             <?php if (isset($_GET['msg'])): ?>
@@ -121,13 +155,14 @@ if ($isTopManager) {
                 <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
             <?php endif; ?>
 
-            <!-- Search & filters -->
-            <form method="GET" class="row g-3 mb-4">
-                <div class="col-md-5">
-                    <input type="text" name="search" class="form-control" placeholder="Search by reference, subject, sender..." value="<?= htmlspecialchars($search) ?>">
-                </div>
+            <!-- Single‑line filter bar with search, dropdowns, and buttons -->
+            <form method="GET" class="filter-bar">
+                <!-- Search input + button -->
+                <input type="text" name="search" class="form-control search-input" placeholder="Search by ref, subject, sender..." value="<?= htmlspecialchars($search) ?>">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Search</button>
+
                 <?php if ($isTopManager): ?>
-                <div class="col-md-2">
+                    <!-- Type dropdown -->
                     <select name="type" class="form-select">
                         <option value="">All Types</option>
                         <option value="demande" <?= $type=='demande' ? 'selected' : '' ?>>Demande</option>
@@ -135,29 +170,28 @@ if ($isTopManager) {
                         <option value="rapport" <?= $type=='rapport' ? 'selected' : '' ?>>Rapport</option>
                         <option value="reponse" <?= $type=='reponse' ? 'selected' : '' ?>>Reponse</option>
                     </select>
-                </div>
-                <div class="col-md-2">
+
+                    <!-- Priority dropdown -->
                     <select name="priority" class="form-select">
                         <option value="">All Priorities</option>
                         <option value="normal" <?= $priority=='normal' ? 'selected' : '' ?>>Normal</option>
                         <option value="important" <?= $priority=='important' ? 'selected' : '' ?>>Important</option>
                         <option value="urgent" <?= $priority=='urgent' ? 'selected' : '' ?>>Urgent</option>
                     </select>
-                </div>
-                <div class="col-md-2">
+
+                    <!-- Status dropdown -->
                     <select name="status" class="form-select">
                         <option value="">All Statuses</option>
                         <option value="unread" <?= $status=='unread' ? 'selected' : '' ?>>Unread (no one opened)</option>
                         <option value="archived" <?= $status=='archived' ? 'selected' : '' ?>>Archived (opened)</option>
                     </select>
-                </div>
+
+                    <!-- Filter button (re‑submit with current selections) -->
+                    <button type="submit" class="btn btn-secondary"><i class="fas fa-filter"></i> Filter</button>
                 <?php endif; ?>
-                <div class="col-md-<?= $isTopManager ? '1' : '2' ?>">
-                    <button type="submit" class="btn btn-primary w-100">Filter</button>
-                </div>
-                <div class="col-md-1">
-                    <a href="archive.php" class="btn btn-secondary w-100">Reset</a>
-                </div>
+
+                <!-- Reset button -->
+                <a href="archive.php" class="btn btn-danger"><i class="fas fa-undo"></i> Reset</a>
             </form>
 
             <?php if (count($conversations) > 0): ?>
@@ -188,7 +222,7 @@ if ($isTopManager) {
                             <td><?= htmlspecialchars($conv['subject']) ?></td>
                             <td><?= htmlspecialchars($conv['sender_name']) ?> (<?= htmlspecialchars($conv['sender_role']) ?>)</small></td>
                             <?php if ($isTopManager): ?>
-                            <td><?= nl2br(htmlspecialchars($conv['recipients_list'] ?? '-')) ?></td>
+                            <td><?= nl2br(htmlspecialchars(isset($conv['recipients_list']) ? $conv['recipients_list'] : '-')) ?></small></td>
                             <?php endif; ?>
                             <td><span class="badge bg-secondary"><?= ucfirst($conv['type']) ?></span></td>
                             <td><span class="badge bg-<?= $conv['priority']=='urgent'?'danger':($conv['priority']=='important'?'warning':'secondary') ?>"><?= ucfirst($conv['priority']) ?></span></td>
@@ -203,21 +237,28 @@ if ($isTopManager) {
                             </td>
                             <?php if ($isTopManager): ?>
                             <td>
-                                <?php if ($conv['is_archived_global'] ?? false): ?>
+                                <?php if (isset($conv['is_archived_global']) && $conv['is_archived_global']): ?>
                                     <span class="badge bg-success">Archived (opened)</span>
                                 <?php else: ?>
                                     <span class="badge bg-warning text-dark">Inbox (not opened)</span>
                                 <?php endif; ?>
                             </td>
                             <?php endif; ?>
+                            <!-- Actions dropdown -->
                             <td>
-                                <a href="view_mail.php?id=<?= $conv['id'] ?>" class="btn btn-sm btn-primary">View</a>
-                                <!-- DELETE BUTTON FOR ALL MANAGERS (removed sender check) -->
-                                <a href="?delete_mail=<?= $conv['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this conversation permanently? This action cannot be undone.')">Delete</a>
-                                <?php if (!$isTopManager): ?>
-                                    <a href="?restore=<?= $conv['id'] ?>" class="btn btn-sm btn-success">Restore</a>
-                                <?php endif; ?>
-                            </td>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                        Actions ▼
+                                    </button>
+                                    <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="view_mail.php?id=<?= $conv['id'] ?>">View</a></li>
+                                        <?php if (!$isTopManager): ?>
+                                            <li><a class="dropdown-item" href="?restore=<?= $conv['id'] ?>" onclick="return confirm('Restore this mail to inbox?')">Restore</a></li>
+                                        <?php endif; ?>
+                                        <li><a class="dropdown-item text-danger" href="?delete_mail=<?= $conv['id'] ?>" onclick="return confirm('Delete this conversation permanently? This action cannot be undone.')">Delete</a></li>
+                                    </ul>
+                                </div>
+                             </div>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>

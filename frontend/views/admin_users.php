@@ -1,26 +1,75 @@
 <?php
-// session_start(); // <-- REMOVED (session already started in config.php)
+// session_start(); // REMOVED – session already started in config.php
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 requireRole('admin');
 requirePasswordChange();
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/config.php';
 
-// ========== EMBEDDED HELPER FUNCTIONS ==========
+// ========== HELPER: Build code path for a structure (e.g., "STOS-DRH") ==========
+function getStructureCodePath($pdo, $structureId) {
+    if (!$structureId) return 'N/A';
+    $stmt = $pdo->prepare("SELECT id, code, parent_id FROM structures");
+    $stmt->execute();
+    $all = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $parentMap = [];
+    $codeMap = [];
+    foreach ($all as $s) {
+        $parentMap[$s['id']] = $s['parent_id'];
+        $codeMap[$s['id']] = $s['code'];
+    }
+    $pathCodes = [];
+    $current = $structureId;
+    $max = 100;
+    while ($current !== null && $max-- > 0) {
+        $code = $codeMap[$current];
+        if ($code !== 'SONA') { // exclude root SONELGAZ
+            array_unshift($pathCodes, $code);
+        }
+        $current = $parentMap[$current] ?? null;
+    }
+    return implode('-', $pathCodes);
+}
+
+// ========== EMBEDDED HELPER FUNCTIONS WITH IMPROVED SEARCH ==========
 function getAllUsers($pdo, $search) {
-    $sql = "SELECT u.*, s.name as structure_name,
-            (SELECT COUNT(*) FROM mails WHERE sender_id = u.id) as sent_count,
-            (SELECT COUNT(*) FROM mail_recipients WHERE recipient_id = u.id) as received_count
+    $sql = "SELECT u.*, s.id as structure_id
             FROM users u LEFT JOIN structures s ON u.structure_id = s.id
             WHERE u.role != 'admin'";
     $params = [];
+
     if (!empty($search)) {
-        $sql .= " AND (u.username LIKE ? OR u.full_name LIKE ? OR u.email LIKE ?)";
-        $params = ["%$search%", "%$search%", "%$search%"];
+        // Split search into individual words
+        $words = preg_split('/\s+/', trim($search));
+        $fullNameConditions = [];
+        foreach ($words as $word) {
+            $fullNameConditions[] = "LOWER(u.full_name) LIKE LOWER(?)";
+            $params[] = "%$word%";
+        }
+        $fullNameSql = implode(' OR ', $fullNameConditions);
+
+        $sql .= " AND (LOWER(u.username) LIKE LOWER(?) 
+                    OR LOWER(u.email) LIKE LOWER(?) 
+                    OR ($fullNameSql))";
+        $params[] = "%$search%";  // for username
+        $params[] = "%$search%";  // for email
+        // full_name words already added to $params
     }
-    $sql .= " ORDER BY u.full_name";
+
+    $sql .= " ORDER BY SUBSTRING_INDEX(u.full_name, ' ', -1) ASC";
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    foreach ($users as &$u) {
+        $u['structure_code_path'] = getStructureCodePath($pdo, $u['structure_id']);
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM mails WHERE sender_id = ?");
+        $stmt->execute([$u['id']]);
+        $u['sent_count'] = $stmt->fetchColumn();
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM mail_recipients WHERE recipient_id = ?");
+        $stmt->execute([$u['id']]);
+        $u['received_count'] = $stmt->fetchColumn();
+    }
+    return $users;
 }
 
 function getUserForEdit($pdo, $id) {
@@ -29,7 +78,20 @@ function getUserForEdit($pdo, $id) {
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
+function usernameExists($pdo, $username, $excludeId = 0) {
+    $sql = "SELECT id FROM users WHERE username = ?";
+    $params = [$username];
+    if ($excludeId > 0) {
+        $sql .= " AND id != ?";
+        $params[] = $excludeId;
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetch() !== false;
+}
+
 function addUser($pdo, $data, $customPassword) {
+    if (usernameExists($pdo, $data['username'])) return false;
     $password = !empty($customPassword) ? $customPassword : 'admin123';
     $hash = password_hash($password, PASSWORD_DEFAULT);
     $stmt = $pdo->prepare("INSERT INTO users (username, password, email, full_name, structure_id, role, is_active, password_changed) VALUES (?, ?, ?, ?, ?, ?, 1, 0)");
@@ -37,6 +99,7 @@ function addUser($pdo, $data, $customPassword) {
 }
 
 function updateUser($pdo, $id, $data) {
+    if (usernameExists($pdo, $data['username'], $id)) return false;
     $stmt = $pdo->prepare("UPDATE users SET username=?, full_name=?, email=?, structure_id=?, role=? WHERE id=? AND role != 'admin'");
     return $stmt->execute([$data['username'], $data['full_name'], $data['email'], $data['structure_id'], $data['role'], $id]);
 }
@@ -51,20 +114,34 @@ function deleteUser($pdo, $id) {
     return $stmt->execute([$id]) ? true : "Delete failed.";
 }
 
-function toggleUserActive($pdo, $id) {
-    $stmt = $pdo->prepare("UPDATE users SET is_active = NOT is_active WHERE id = ? AND role != 'admin'");
-    return $stmt->execute([$id]);
-}
-
-function resetUserPassword($pdo, $id) {
-    $hash = password_hash('admin123', PASSWORD_DEFAULT);
-    $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ? AND role != 'admin'");
-    return $stmt->execute([$hash, $id]);
-}
-
 function getAllStructuresForSelect($pdo) {
-    $stmt = $pdo->query("SELECT id, name FROM structures ORDER BY name");
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $stmt = $pdo->query("SELECT id, name, parent_id FROM structures ORDER BY name");
+    $structures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (empty($structures)) return [];
+
+    $parentMap = [];
+    $nameMap = [];
+    foreach ($structures as $s) {
+        $parentMap[$s['id']] = $s['parent_id'];
+        $nameMap[$s['id']] = $s['name'];
+    }
+
+    $result = [];
+    foreach ($structures as $s) {
+        $id = $s['id'];
+        $path = [];
+        $current = $id;
+        $max = 100;
+        while ($current !== null && $max-- > 0) {
+            $path[] = $nameMap[$current];
+            $current = $parentMap[$current];
+        }
+        $path = array_reverse($path);
+        $fullPath = implode(' → ', $path);
+        $result[] = ['id' => $id, 'name' => $fullPath];
+    }
+    usort($result, fn($a,$b) => strcmp($a['name'], $b['name']));
+    return $result;
 }
 // =================================================
 
@@ -79,12 +156,10 @@ $editStructureId = '';
 $editRole = '';
 $search = $_GET['search'] ?? '';
 
-// CSRF Token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
         $error = "CSRF error. Please reload the page.";
@@ -94,14 +169,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $result = deleteUser($pdo, $userId);
             if ($result === true) $success = "User deleted successfully.";
             else $error = $result;
-        } elseif (isset($_POST['toggle_user'])) {
-            $userId = (int)$_POST['user_id'];
-            toggleUserActive($pdo, $userId);
-            $success = "User status updated.";
-        } elseif (isset($_POST['reset_password'])) {
-            $userId = (int)$_POST['user_id'];
-            resetUserPassword($pdo, $userId);
-            $success = "Password has been reset to 'admin123'.";
         } elseif (isset($_POST['save_user'])) {
             $username = trim($_POST['username']);
             $full_name = trim($_POST['full_name']);
@@ -119,13 +186,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $success = "User updated successfully.";
                         $editMode = false;
                     } else {
-                        $error = "Failed to update user.";
+                        $error = "Failed to update user. Username may already exist.";
                     }
                 } else {
                     if (addUser($pdo, $data, $custom_password)) {
                         $success = "User added successfully. Default password: " . ($custom_password ?: 'admin123');
                     } else {
-                        $error = "Failed to add user (username may already exist).";
+                        $error = "Failed to add user. Username already exists or data invalid.";
                     }
                 }
             }
@@ -133,7 +200,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Load user for editing
 if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
     $user = getUserForEdit($pdo, $_GET['edit']);
     if ($user) {
@@ -178,17 +244,13 @@ $structures = getAllStructuresForSelect($pdo);
         
         <div class="col-md-10 p-4">
             <h2>Manage Employees</h2>
-            
             <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
             <?php if ($success): ?><div class="alert alert-success"><?= htmlspecialchars($success) ?></div><?php endif; ?>
 
-            <!-- Search -->
             <form method="GET" class="mb-4">
                 <div class="row g-2">
                     <div class="col-md-8">
-                        <input type="text" name="search" class="form-control" 
-                               placeholder="Search by username, full name or email" 
-                               value="<?= htmlspecialchars($search) ?>">
+                        <input type="text" name="search" class="form-control" placeholder="Search by username, full name or email (case‑insensitive, any word order)" value="<?= htmlspecialchars($search) ?>">
                     </div>
                     <div class="col-md-2"><button type="submit" class="btn btn-primary w-100">Search</button></div>
                     <div class="col-md-2"><a href="admin_users.php" class="btn btn-secondary w-100">Reset</a></div>
@@ -197,46 +259,24 @@ $structures = getAllStructuresForSelect($pdo);
 
             <!-- Add / Edit Form -->
             <div class="card mb-4">
-                <div class="card-header bg-primary text-white">
-                    <h5><?= $editMode ? 'Edit Employee' : 'Add New Employee' ?></h5>
-                </div>
+                <div class="card-header bg-primary text-white"><h5><?= $editMode ? 'Edit Employee' : 'Add New Employee' ?></h5></div>
                 <div class="card-body">
                     <form method="POST">
                         <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                         <input type="hidden" name="save_user" value="1">
                         <?php if($editMode): ?><input type="hidden" name="edit_id" value="<?= $editId ?>"><?php endif; ?>
-
                         <div class="row g-3">
-                            <div class="col-md-3">
-                                <input type="text" name="username" class="form-control" placeholder="Username" 
-                                       value="<?= htmlspecialchars($editUsername) ?>" required>
-                            </div>
-                            <div class="col-md-3">
-                                <input type="text" name="full_name" class="form-control" placeholder="Full Name" 
-                                       value="<?= htmlspecialchars($editFullName) ?>" required>
-                            </div>
-                            <div class="col-md-3">
-                                <input type="email" name="email" class="form-control" placeholder="Email" 
-                                       value="<?= htmlspecialchars($editEmail) ?>" required>
-                            </div>
-                            <div class="col-md-3">
-                                <button type="submit" class="btn btn-success w-100">
-                                    <?= $editMode ? 'Update Employee' : 'Add Employee' ?>
-                                </button>
-                                <?php if($editMode): ?>
-                                    <a href="admin_users.php" class="btn btn-secondary w-100 mt-2">Cancel</a>
-                                <?php endif; ?>
-                            </div>
+                            <div class="col-md-3"><input type="text" name="username" class="form-control" placeholder="Username" value="<?= htmlspecialchars($editUsername) ?>" required></div>
+                            <div class="col-md-3"><input type="text" name="full_name" class="form-control" placeholder="Full Name" value="<?= htmlspecialchars($editFullName) ?>" required></div>
+                            <div class="col-md-3"><input type="email" name="email" class="form-control" placeholder="Email" value="<?= htmlspecialchars($editEmail) ?>" required></div>
+                            <div class="col-md-3"><button type="submit" class="btn btn-success w-100"><?= $editMode ? 'Update' : 'Add' ?></button><?php if($editMode): ?><a href="admin_users.php" class="btn btn-secondary w-100 mt-2">Cancel</a><?php endif; ?></div>
                         </div>
-
                         <div class="row g-3 mt-2">
                             <div class="col-md-4">
                                 <select name="structure_id" class="form-select" required>
                                     <option value="">Select Structure</option>
                                     <?php foreach($structures as $s): ?>
-                                        <option value="<?= $s['id'] ?>" <?= $editStructureId == $s['id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($s['name']) ?>
-                                        </option>
+                                        <option value="<?= $s['id'] ?>" <?= $editStructureId == $s['id'] ? 'selected' : '' ?>><?= htmlspecialchars($s['name']) ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
@@ -248,37 +288,21 @@ $structures = getAllStructuresForSelect($pdo);
                                 </select>
                             </div>
                             <?php if(!$editMode): ?>
-                            <div class="col-md-4">
-                                <input type="password" name="custom_password" class="form-control" 
-                                       placeholder="Custom password (optional)">
-                            </div>
+                            <div class="col-md-4"><input type="password" name="custom_password" class="form-control" placeholder="Custom password (optional)"></div>
                             <?php endif; ?>
                         </div>
                     </form>
                 </div>
             </div>
 
-            <!-- Users List -->
+            <!-- Users List with Action Dropdown -->
             <div class="card">
-                <div class="card-header bg-secondary text-white">
-                    <h5>Employees List</h5>
-                </div>
+                <div class="card-header bg-secondary text-white"><h5>Employees List</h5></div>
                 <div class="card-body">
                     <div class="table-responsive">
-                        <table class="table table-bordered">
+                        <table class="table table-bordered table-hover">
                             <thead class="table-dark">
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Username</th>
-                                    <th>Full Name</th>
-                                    <th>Email</th>
-                                    <th>Structure</th>
-                                    <th>Role</th>
-                                    <th>Status</th>
-                                    <th>Last Login</th>
-                                    <th>Mails</th>
-                                    <th>Actions</th>
-                                </tr>
+                                <tr><th>ID</th><th>Username</th><th>Full Name</th><th>Email</th><th>Structure (Code Path)</th><th>Role</th><th>Status</th><th>Last Login</th><th>Mails</th><th>Actions</th></tr>
                             </thead>
                             <tbody>
                             <?php foreach($users as $u): ?>
@@ -287,23 +311,26 @@ $structures = getAllStructuresForSelect($pdo);
                                 <td><?= htmlspecialchars($u['username']) ?></td>
                                 <td><?= htmlspecialchars($u['full_name']) ?></td>
                                 <td><?= htmlspecialchars($u['email']) ?></td>
-                                <td><?= htmlspecialchars($u['structure_name'] ?? 'N/A') ?></td>
+                                <td><span class="badge bg-secondary"><?= htmlspecialchars($u['structure_code_path'] ?? 'N/A') ?></span></td>
                                 <td><span class="badge bg-info"><?= str_replace('_',' ', ucfirst($u['role'])) ?></span></td>
                                 <td><?= $u['is_active'] ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-danger">Suspended</span>' ?></td>
                                 <td><?= $u['last_login'] ? date('d/m/Y H:i', strtotime($u['last_login'])) : 'Never' ?></td>
                                 <td>📤 <?= $u['sent_count'] ?> / 📥 <?= $u['received_count'] ?></td>
                                 <td>
-                                    <form method="POST" class="d-inline">
-                                        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-                                        <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
-                                        <a href="?edit=<?= $u['id'] ?>" class="btn btn-sm btn-primary">Edit</a>
-                                        <button type="submit" name="reset_password" class="btn btn-sm btn-warning" onclick="return confirm('Reset password to admin123?')">Reset</button>
-                                        <button type="submit" name="toggle_user" class="btn btn-sm btn-info">
-                                            <?= $u['is_active'] ? 'Suspend' : 'Activate' ?>
-                                        </button>
-                                        <button type="submit" name="delete_user" class="btn btn-sm btn-danger" onclick="return confirm('Delete this user permanently?')">Delete</button>
-                                    </form>
-                                </td>
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Manage ▼</button>
+                                        <ul class="dropdown-menu">
+                                            <li><a class="dropdown-item" href="?edit=<?= $u['id'] ?>">Edit</a></li>
+                                            <li>
+                                                <form method="POST" style="display: inline; width: 100%;">
+                                                    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                                                    <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
+                                                    <button type="submit" name="delete_user" class="dropdown-item text-danger" onclick="return confirm('Delete this user permanently?')">Delete</button>
+                                                </form>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                  </div>
                             </tr>
                             <?php endforeach; ?>
                             </tbody>
@@ -314,7 +341,6 @@ $structures = getAllStructuresForSelect($pdo);
         </div>
     </div>
 </div>
-
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="../assets/js/main.js"></script>
 </body>
