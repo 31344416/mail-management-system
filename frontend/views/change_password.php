@@ -1,5 +1,5 @@
 <?php
-session_start();
+// session_start(); // ← Absolument pas ici – déjà dans config.php
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/auth.php';
 require_once $_SERVER['DOCUMENT_ROOT'] . '/mail_management/backend/config.php';
 

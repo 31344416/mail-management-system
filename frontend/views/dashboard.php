@@ -57,7 +57,6 @@ extract($data);
 </head>
 <body>
 <?php if (hasRole('admin')): ?>
-    <!-- Background image for admin -->
     <div class="admin-dashboard-bg"></div>
 <?php endif; ?>
 
@@ -89,7 +88,6 @@ extract($data);
         <!-- Main Content -->
         <div class="col-md-10">
             <?php if (!hasRole('admin')): ?>
-                <!-- Non-admin content -->
                 <div class="p-4">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h2>Welcome, <?= htmlspecialchars($_SESSION['full_name']) ?>!</h2>
@@ -179,7 +177,6 @@ extract($data);
                     </div>
                 </div>
             <?php else: ?>
-                <!-- Admin Centered Welcome Card with Background -->
                 <div class="admin-content-wrapper">
                     <div class="welcome-card">
                         <i class="fas fa-user-shield fa-4x text-primary mb-3"></i>
@@ -201,7 +198,6 @@ extract($data);
 <script src="../assets/js/main.js"></script>
 
 <script>
-// Notification click handler
 document.querySelectorAll('.notification-item').forEach(function(item) {
     const notificationId = item.dataset.id;
     if (!notificationId) return;
