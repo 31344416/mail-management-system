@@ -43,6 +43,7 @@ function canReplyToType($type) {
     }
 }
 
+// --- Fonctions pour le changement de mot de passe obligatoire ---
 function requirePasswordChange() {
     if (isset($_SESSION['force_password_change']) && $_SESSION['force_password_change'] === true) {
         header('Location: ../frontend/views/change_password.php');
