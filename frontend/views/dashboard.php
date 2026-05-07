@@ -100,10 +100,7 @@ extract($data);
         <!-- Main Content -->
         <div class="col-md-10">
             <?php if (!hasRole('admin')): ?>
-<<<<<<< HEAD
-                <!-- Non-admin content (unchanged) -->
-=======
->>>>>>> f696ff889d4a3b348739cc942892c0b1c3d5ebd7
+
                 <div class="p-4">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h2>Welcome, <?= htmlspecialchars($_SESSION['full_name']) ?>!</h2>
@@ -193,10 +190,8 @@ extract($data);
                     </div>
                 </div>
             <?php else: ?>
-<<<<<<< HEAD
+
                 <!-- Admin Centered Welcome Card with clickable links -->
-=======
->>>>>>> f696ff889d4a3b348739cc942892c0b1c3d5ebd7
                 <div class="admin-content-wrapper">
                     <div class="welcome-card">
                         <i class="fas fa-user-shield fa-4x text-primary mb-3"></i>
